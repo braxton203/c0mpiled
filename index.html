@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101a1b" />
+    <title>Floorwatch — Factory Safety Simulator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div><p class="eyebrow">SAFETY SYSTEM DEMO</p><h1>Floorwatch</h1></div>
+        <div class="live-state"><span class="live-dot"></span> SIMULATION LIVE</div>
+      </header>
+
+      <section class="intro">
+        <div><h2>Factory floor overview</h2><p>Live proximity and restricted-zone monitoring</p></div>
+        <div class="legend"><span><i class="legend-person"></i> Worker</span><span><i class="legend-forklift"></i> Forklift</span><span><i class="legend-zone"></i> Restricted zone</span></div>
+      </section>
+
+      <section class="dashboard">
+        <div class="map-panel">
+          <div class="panel-heading"><div><strong>Assembly floor</strong><small>Demo layout · 60 × 36 m</small></div><span id="sim-status" class="status-pill">RUNNING</span></div>
+          <div class="canvas-wrap"><canvas id="factory-map" aria-label="Animated factory floor showing workers, a forklift, and restricted zones"></canvas></div>
+          <div class="map-footer"><span><b class="key-safe"></b> Clear</span><span><b class="key-warning"></b> Proximity warning</span><span><b class="key-danger"></b> Restricted area</span><span class="scale">Every grid square = 2 m</span></div>
+        </div>
+
+        <aside class="side-panel">
+          <div class="metrics"><article><small>ACTIVE WORKERS</small><strong id="worker-count">0</strong></article><article><small>VEHICLES</small><strong id="vehicle-count">0</strong></article></div>
+          <section class="alerts-panel"><div class="section-heading"><h3>Safety events</h3><span id="event-count" class="count-badge">0</span></div><div id="alerts" class="alerts-list" aria-live="polite"><p class="empty-state">No active safety events.</p></div></section>
+          <section class="controls-panel"><h3>Demo controls</h3><button id="pause-button" class="primary-button">Pause simulation</button><button id="reset-button" class="secondary-button">Reset demo</button><p>Events are calculated from simulated positions. No real sensors or worker phones are connected.</p></section>
+        </aside>
+      </section>
+      <footer>Hackathon prototype · Simulated data only · Not for operational safety decisions</footer>
+    </main>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
