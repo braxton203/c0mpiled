@@ -1,0 +1,26 @@
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.admin-link {
+  font-size: 10px;
+  color: #bac8bf;
+  text-decoration: none;
+  border: 1px solid #40504a;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+.admin-link:hover {
+  color: #c9ef73;
+  border-color: #779567;
+}
+@media (max-width: 560px) {
+  .topbar-actions {
+    gap: 8px;
+  }
+  .admin-link {
+    padding: 6px 7px;
+    font-size: 9px;
+  }
+}

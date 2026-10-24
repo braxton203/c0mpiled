@@ -6,6 +6,27 @@ A browser-only hackathon demo for a future proximity and geofencing safety syste
 
 Serve this folder with any static HTTP server (for example `python3 -m http.server 8000`) and open `http://localhost:8000`. ES modules need an HTTP origin in many browsers, so opening the file directly may not work.
 
+## Admin floor configuration
+
+Open `http://localhost:8000/admin.html` or use **Admin console** from the safety overview. Register workers and mobile equipment by display name and tracker/tag ID; do not enter or drag asset locations. Their markers and live proximity checks are driven by timestamped messages from the configured WebSocket tracking gateway. Restricted zones remain site floor-plan configuration. Tracker registrations and proximity thresholds are stored in this browser's local storage and remain separate from the simulation.
+
+The browser expects a WebSocket message for each position update in this shape:
+
+```json
+{
+	"type": "location",
+	"trackerId": "TAG-1042",
+	"x": 18.4,
+	"y": 12.7,
+	"timestamp": "2026-10-24T16:20:00Z",
+	"accuracyMeters": 0.8
+}
+```
+
+Coordinates are meters from the floor's top-left. A snapshot can use `{"type":"snapshot","locations":[...]}`. Updates for unknown tracker IDs, invalid coordinates, out-of-floor positions, or timestamps older than 15 seconds are ignored. Locations older than 5 seconds are marked stale and excluded from proximity checks. The admin console does not include a tracking gateway or generate location data; connect a compatible positioning system before expecting asset markers or alerts.
+
+The admin access screen is only a demo role gate. It does not authenticate users or protect data, and this page does not notify workers. Use validated positioning and notification systems, server-side authorization, and site-specific safety engineering before operational use.
+
 ## Stable data contract
 
 All positions and zone dimensions use meters from the floor's top-left corner. The shape lives in `src/model.js`:
