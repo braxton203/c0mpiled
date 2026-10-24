@@ -1,29 +1,207 @@
 import { FLOOR } from './model.js';
 
-const COLORS = { floor: '#1a2724', grid: '#2b3a35', worker: '#64d9a0', vehicle: '#f4a94d', zone: 'rgba(208, 88, 79, .22)', zoneLine: '#df766d', warning: '#f3b34f', danger: '#e76d65', text: '#c4d0c9' };
+const COLORS = {
+  background: '#17231f', floor: '#1b2924', grid: '#2b3b34', aisle: '#25372f', aisleLine: '#3c5147',
+  fixture: '#293a33', fixtureEdge: '#506157', worker: '#67d9a0', vehicle: '#f1a94e',
+  zone: 'rgba(207, 83, 77, .22)', zoneEdge: '#e3756d', text: '#d1ddd5', muted: '#96a79d',
+  warning: '#f3bd54', danger: '#ec7069',
+};
 
-export function renderFactory(canvas, state, events = []) {
+const WORK_AREAS = [
+  { x: 14, y: 4, width: 11, height: 7, title: 'PARTS & KITTING', code: 'A1' },
+  { x: 15, y: 25, width: 12, height: 7, title: 'ASSEMBLY', code: 'A2' },
+  { x: 31, y: 4, width: 11, height: 7, title: 'STORAGE', code: 'B1' },
+  { x: 34, y: 25, width: 10, height: 7, title: 'PACK & SHIP', code: 'B2' },
+];
+
+/** Draw the supplied floor records, simulated/sensor positions, and safety events. */
+export function renderFactory(canvas, state, positions, events = []) {
+  if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
   const dpr = window.devicePixelRatio || 1;
-  if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) { canvas.width = Math.round(rect.width * dpr); canvas.height = Math.round(rect.height * dpr); }
+  const width = Math.round(rect.width * dpr), height = Math.round(rect.height * dpr);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const w = rect.width, h = rect.height, scale = Math.min(w / FLOOR.width, h / FLOOR.height);
-  const ox = (w - FLOOR.width * scale) / 2, oy = (h - FLOOR.height * scale) / 2;
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  const scale = Math.min(rect.width / FLOOR.width, rect.height / FLOOR.height);
+  const ox = (rect.width - FLOOR.width * scale) / 2, oy = (rect.height - FLOOR.height * scale) / 2;
   const px = (x) => ox + x * scale, py = (y) => oy + y * scale;
-  ctx.fillStyle = COLORS.floor; ctx.fillRect(0, 0, w, h);
-  ctx.save(); ctx.beginPath(); ctx.rect(ox, oy, FLOOR.width * scale, FLOOR.height * scale); ctx.clip();
-  ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
-  for (let x = 0; x <= FLOOR.width; x += 2) { ctx.beginPath(); ctx.moveTo(px(x), oy); ctx.lineTo(px(x), oy + FLOOR.height * scale); ctx.stroke(); }
-  for (let y = 0; y <= FLOOR.height; y += 2) { ctx.beginPath(); ctx.moveTo(ox, py(y)); ctx.lineTo(ox + FLOOR.width * scale, py(y)); ctx.stroke(); }
-  // Fixed floor fixtures
-  ctx.fillStyle = '#22312d'; ctx.strokeStyle = '#3b4a43'; ctx.lineWidth = 1;
-  [[15, 5, 8, 4, 'Parts'], [17, 25, 8, 5, 'Assembly'], [31, 5, 7, 4, 'Storage'], [32, 25, 9, 5, 'Packing']].forEach(([x,y,bw,bh,label]) => { ctx.fillRect(px(x),py(y),bw*scale,bh*scale); ctx.strokeRect(px(x),py(y),bw*scale,bh*scale); ctx.fillStyle=COLORS.text; ctx.font='10px sans-serif'; ctx.fillText(label,px(x)+5,py(y)+14); ctx.fillStyle='#22312d'; });
-  for (const zone of state.zones) { ctx.fillStyle=COLORS.zone; ctx.fillRect(px(zone.x),py(zone.y),zone.width*scale,zone.height*scale); ctx.strokeStyle=COLORS.zoneLine; ctx.setLineDash([5,4]); ctx.strokeRect(px(zone.x),py(zone.y),zone.width*scale,zone.height*scale); ctx.setLineDash([]); ctx.fillStyle='#efaaa2'; ctx.font='10px sans-serif'; ctx.fillText(`RESTRICTED · ${zone.name}`,px(zone.x)+6,py(zone.y)+14); }
-  const activeWorkers = new Set(events.filter((e) => e.type === 'proximity').map((e) => e.id.split(':')[1]));
-  for (const vehicle of state.vehicles) { const x=px(vehicle.x),y=py(vehicle.y),r=SAFETY_RADIUS(scale); ctx.fillStyle='rgba(244,169,77,.10)'; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.save(); ctx.translate(x,y); ctx.rotate(vehicle.heading || 0); ctx.fillStyle=COLORS.vehicle; ctx.fillRect(-scale*1.1,-scale*.65,scale*2.2,scale*1.3); ctx.fillStyle='#573a19'; ctx.fillRect(0,-scale*.42,scale*.8,scale*.84); ctx.restore(); ctx.fillStyle=COLORS.text; ctx.font='10px sans-serif'; ctx.fillText(vehicle.id,x+8,y-10); }
-  for (const worker of state.workers) { const x=px(worker.x),y=py(worker.y); ctx.fillStyle=activeWorkers.has(worker.id)?COLORS.warning:COLORS.worker; ctx.beginPath(); ctx.arc(x,y,scale*.42,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#102019'; ctx.lineWidth=2; ctx.stroke(); ctx.fillStyle=COLORS.text; ctx.font='10px sans-serif'; ctx.fillText(worker.id,x+7,y+4); }
+
+  ctx.fillStyle = COLORS.background;
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(ox, oy, FLOOR.width * scale, FLOOR.height * scale); ctx.clip();
+  drawGrid(ctx, scale, ox, oy, px, py);
+  drawAisles(ctx, scale, px, py);
+  drawWorkAreas(ctx, scale, px, py);
+  drawLoadingDocks(ctx, scale, px, py);
+  drawZones(ctx, state.zones || [], scale, px, py);
+  const active = activeEntityAlerts(events);
+  drawVehicles(ctx, state.vehicles || state.equipment || [], positions?.vehicles || positions?.equipment || [], active, scale, px, py);
+  drawWorkers(ctx, state.workers || [], positions?.workers || [], active, scale, px, py);
   ctx.restore();
 }
 
-function SAFETY_RADIUS(scale) { return scale * 7; }
+function drawGrid(ctx, scale, ox, oy, px, py) {
+  ctx.fillStyle = COLORS.floor;
+  ctx.fillRect(ox, oy, FLOOR.width * scale, FLOOR.height * scale);
+  ctx.strokeStyle = COLORS.grid; ctx.lineWidth = 1;
+  for (let x = 0; x <= FLOOR.width; x += 2) {
+    ctx.beginPath(); ctx.moveTo(px(x), oy); ctx.lineTo(px(x), oy + FLOOR.height * scale); ctx.stroke();
+  }
+  for (let y = 0; y <= FLOOR.height; y += 2) {
+    ctx.beginPath(); ctx.moveTo(ox, py(y)); ctx.lineTo(ox + FLOOR.width * scale, py(y)); ctx.stroke();
+  }
+}
+
+function drawAisles(ctx, scale, px, py) {
+  ctx.fillStyle = COLORS.aisle;
+  ctx.fillRect(px(0), py(15), FLOOR.width * scale, 5 * scale);
+  ctx.fillRect(px(27), py(0), 3 * scale, FLOOR.height * scale);
+  ctx.fillRect(px(46), py(0), 3 * scale, FLOOR.height * scale);
+  ctx.strokeStyle = COLORS.aisleLine; ctx.setLineDash([5, 5]);
+  ctx.beginPath(); ctx.moveTo(px(0), py(17.5)); ctx.lineTo(px(FLOOR.width), py(17.5)); ctx.stroke();
+  for (const x of [28.5, 47.5]) { ctx.beginPath(); ctx.moveTo(px(x), py(0)); ctx.lineTo(px(x), py(FLOOR.height)); ctx.stroke(); }
+  ctx.setLineDash([]);
+  drawArrow(ctx, px(8), py(17.5), 1, 0, scale);
+  drawArrow(ctx, px(52), py(17.5), -1, 0, scale);
+  drawArrow(ctx, px(28.5), py(30), 0, -1, scale);
+  drawArrow(ctx, px(47.5), py(6), 0, 1, scale);
+  label(ctx, 'MAIN FORKLIFT AISLE', px(1), py(16.4), scale, COLORS.muted);
+}
+
+function drawArrow(ctx, x, y, dx, dy, scale) {
+  const size = Math.max(3, scale * 0.42);
+  ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(dy, dx));
+  ctx.fillStyle = COLORS.muted; ctx.beginPath();
+  ctx.moveTo(size, 0); ctx.lineTo(-size, -size * 0.6); ctx.lineTo(-size, size * 0.6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawWorkAreas(ctx, scale, px, py) {
+  for (const area of WORK_AREAS) {
+    const x = px(area.x), y = py(area.y), width = area.width * scale, height = area.height * scale;
+    ctx.fillStyle = COLORS.fixture; ctx.strokeStyle = COLORS.fixtureEdge;
+    roundedRect(ctx, x, y, width, height, 4); ctx.fill(); ctx.stroke();
+    label(ctx, area.title, x + 7, y + 14, scale, COLORS.text);
+    label(ctx, area.code, x + 7, y + 26, scale, COLORS.muted);
+    ctx.fillStyle = '#3a4e43';
+    for (let row = 0; row < 3; row += 1) ctx.fillRect(x + 7, y + height - 7 - row * 4, width * 0.48, 1.5);
+  }
+  for (let i = 0; i < 5; i += 1) {
+    const x = px(32 + i * 1.8), y = py(8.2);
+    ctx.fillStyle = '#43594e'; ctx.fillRect(x, y, 1.25 * scale, 1.8 * scale);
+    ctx.strokeStyle = '#64786c'; ctx.strokeRect(x, y, 1.25 * scale, 1.8 * scale);
+  }
+}
+
+function drawZones(ctx, zones, scale, px, py) {
+  for (const zone of zones) {
+    if (![zone.x, zone.y, zone.width, zone.height].every(Number.isFinite)) continue;
+    const x = px(zone.x), y = py(zone.y), width = zone.width * scale, height = zone.height * scale;
+    ctx.fillStyle = COLORS.zone; ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = COLORS.zoneEdge; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
+    ctx.strokeRect(x, y, width, height); ctx.setLineDash([]);
+    label(ctx, `RESTRICTED · ${zone.name || zone.id}`, x + 5, y + 13, scale, '#ffc0b9');
+  }
+}
+
+function drawVehicles(ctx, records, snapshots, active, scale, px, py) {
+  const byId = new Map(snapshots.map((position) => [position.id, position]));
+  for (const record of records) {
+    const position = byId.get(record.id);
+    if (!validPosition(position)) continue;
+    const x = px(position.x), y = py(position.y), heading = Number.isFinite(position.heading) ? position.heading : 0;
+    ctx.save();
+    ctx.globalAlpha = position.stale ? 0.35 : 1;
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(heading);
+    ctx.fillStyle = active.has(record.id) ? COLORS.danger : COLORS.vehicle;
+    roundedRect(ctx, -1.25 * scale, -0.72 * scale, 2.5 * scale, 1.44 * scale, Math.max(2, scale * 0.12)); ctx.fill();
+    ctx.fillStyle = '#573a19'; ctx.fillRect(-0.1 * scale, -0.52 * scale, 0.78 * scale, 1.04 * scale);
+    ctx.fillStyle = '#101714';
+    for (const wheelX of [-0.82, 0.65]) for (const wheelY of [-0.82, 0.58]) ctx.fillRect(wheelX * scale, wheelY * scale, 0.3 * scale, 0.24 * scale);
+    ctx.restore();
+    label(ctx, record.name || record.id, x + 8, y - 8, scale, COLORS.text);
+    ctx.restore();
+  }
+}
+
+function drawWorkers(ctx, records, snapshots, active, scale, px, py) {
+  const byId = new Map(snapshots.map((position) => [position.id, position]));
+  for (const record of records) {
+    const position = byId.get(record.id);
+    if (!validPosition(position)) continue;
+    const x = px(position.x), y = py(position.y);
+    const alertSeverity = active.get(record.id);
+    if (alertSeverity) drawAlertPulses(ctx, x, y, scale, alertSeverity);
+    ctx.save();
+    ctx.globalAlpha = position.stale ? 0.35 : 1;
+    ctx.fillStyle = alertSeverity ? (alertSeverity === 'danger' ? COLORS.danger : COLORS.warning) : COLORS.worker;
+    ctx.beginPath(); ctx.arc(x, y, Math.max(4, scale * 0.43), 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#102019'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#15201b'; ctx.beginPath(); ctx.arc(x, y - scale * 0.12, scale * 0.12, 0, Math.PI * 2); ctx.fill();
+    label(ctx, record.name || record.id, x + 7, y + 4, scale, COLORS.text);
+    ctx.restore();
+  }
+}
+
+function drawLoadingDocks(ctx, scale, px, py) {
+  label(ctx, 'LOADING / RECEIVING', px(3), py(2.3), scale, COLORS.muted);
+  for (let i = 0; i < 3; i += 1) {
+    const x = px(4 + i * 2.6), y = py(0.6), width = scale * 2, height = scale * 1.1;
+    ctx.fillStyle = '#34473e'; ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = '#62746a'; ctx.strokeRect(x, y, width, height);
+  }
+}
+
+function activeEntityAlerts(events) {
+  const ids = new Map();
+  for (const event of events || []) {
+    const affected = [...(event.entityIds || []), event.workerId, event.vehicleId, event.otherWorkerId].filter(Boolean);
+    for (const id of affected) {
+      if (event.severity === 'danger' || !ids.has(id)) ids.set(id, event.severity || 'warning');
+    }
+  }
+  return ids;
+}
+
+function drawAlertPulses(ctx, x, y, scale, severity) {
+  const phase = (performance.now() % 1200) / 1200;
+  const color = severity === 'danger' ? COLORS.danger : COLORS.warning;
+  ctx.save();
+  for (let ring = 0; ring < 3; ring += 1) {
+    const progress = (phase + ring / 3) % 1;
+    const radius = scale * (0.6 + progress * 1.8);
+    ctx.globalAlpha = (1 - progress) * 0.62;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1, scale * 0.12);
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function validPosition(value) {
+  return value && Number.isFinite(value.x) && Number.isFinite(value.y);
+}
+
+function label(ctx, text, x, y, scale, color) {
+  ctx.fillStyle = color;
+  ctx.font = `${Math.max(8, Math.min(11, scale * 0.55))}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  ctx.fillText(String(text), x, y);
+}
+
+function roundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r); ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r); ctx.closePath();
+}

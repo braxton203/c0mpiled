@@ -194,6 +194,10 @@ a {
   background: #5baf67;
   box-shadow: 0 0 0 3px rgba(91, 175, 103, 0.14);
 }
+.connection-dot.demo {
+  background: #d89b35;
+  box-shadow: 0 0 0 3px rgba(216, 155, 53, 0.14);
+}
 .connection-dot.error {
   background: #cf6257;
 }
@@ -258,6 +262,7 @@ a {
 }
 .manage-panel,
 .inventory-panel,
+.zones-panel,
 .rules-panel,
 .alerts-panel {
   padding: 15px;
@@ -644,6 +649,10 @@ a {
   border: 1px solid #e58a76;
   border-radius: 0 !important;
 }
+.legend-alert {
+  background: #e4a43c;
+  box-shadow: 0 0 0 2px rgba(228, 164, 60, 0.22), 0 0 7px rgba(228, 164, 60, 0.8);
+}
 .legend-route {
   width: 14px !important;
   height: 0 !important;
@@ -770,7 +779,52 @@ a {
   cursor: not-allowed;
   opacity: 0.55;
 }
-.rule-state.connected {
+.demo-button {
+  width: 100%;
+  margin-top: 7px;
+  min-height: 31px;
+}
+.zone-form {
+  border-top: 0;
+  padding-top: 0;
+}
+.zone-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+  max-height: 150px;
+  overflow: auto;
+}
+.zone-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 29px;
+  padding: 5px 6px;
+  background: #f2f4ef;
+  color: #344139;
+  font-size: 9px;
+}
+.zone-row span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zone-row small {
+  color: #829087;
+  font: 8px var(--mono);
+}
+.zone-row button {
+  border: 0;
+  background: transparent;
+  color: #9b5144;
+  font-size: 15px;
+  cursor: pointer;
+}
+.rule-state.connected,
+.rule-state.demo {
   color: #32764d;
   background: #e4f2df;
 }

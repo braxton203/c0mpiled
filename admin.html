@@ -22,9 +22,9 @@
     <main class="admin-main" id="admin-workspace" hidden>
       <section class="page-heading">
         <div>
-          <p class="eyebrow">LIVE LOCATION MONITORING <span>·</span> SITE ADMIN</p>
+          <p class="eyebrow">FLOOR SAFETY MONITORING <span>·</span> SITE ADMIN</p>
           <h1>Floor activity<span class="heading-period">.</span></h1>
-          <p class="subheading">Current worker and mobile-equipment positions from the connected tracking system.</p>
+          <p class="subheading">Monitor worker and equipment locations from a simulated demo or a tracking feed.</p>
         </div>
         <div class="tracking-state"><span id="connection-dot" class="connection-dot"></span><span id="connection-label">TRACKING OFFLINE</span></div>
       </section>
@@ -32,7 +32,7 @@
       <section class="summary-strip" aria-label="Live tracking summary">
         <article><span class="summary-label">REGISTERED WORKERS</span><strong id="admin-worker-count">0</strong><span class="summary-note">tracker IDs</span></article>
         <article><span class="summary-label">MOBILE EQUIPMENT</span><strong id="admin-equipment-count">0</strong><span class="summary-note">tracker IDs</span></article>
-        <article><span class="summary-label">LIVE LOCATIONS</span><strong id="admin-live-count">0</strong><span class="summary-note" id="coverage-note">of 0 registered</span></article>
+        <article><span class="summary-label">CURRENT LOCATIONS</span><strong id="admin-live-count">0</strong><span class="summary-note" id="coverage-note">of 0 registered</span></article>
         <article class="summary-alert"><span class="summary-label">PROXIMITY ALERTS</span><strong id="admin-alert-count">0</strong><span class="summary-note">from live positions</span></article>
       </section>
 
@@ -56,25 +56,44 @@
             <div class="section-title inventory-title"><div><span class="step-index">02</span><h2>Tracked assets</h2></div><span id="roster-count" class="roster-count">0 ASSETS</span></div>
             <div id="inventory-list" class="inventory-list" aria-live="polite"></div>
           </section>
+
+          <section class="surface zones-panel">
+            <div class="section-title"><div><span class="step-index">03</span><h2>Restricted zones</h2></div><span id="zone-count" class="roster-count">0 ZONES</span></div>
+            <form id="zone-form" class="item-form zone-form">
+              <label class="field-label" for="zone-name">ZONE NAME</label>
+              <input id="zone-name" maxlength="48" placeholder="e.g. Robot cell" required />
+              <div class="field-row">
+                <label><span class="field-label">X <small>m</small></span><input id="zone-x" type="number" min="0" max="59" step="0.5" value="10" required /></label>
+                <label><span class="field-label">Y <small>m</small></span><input id="zone-y" type="number" min="0" max="35" step="0.5" value="10" required /></label>
+              </div>
+              <div class="field-row">
+                <label><span class="field-label">WIDTH <small>m</small></span><input id="zone-width" type="number" min="1" max="60" step="0.5" value="8" required /></label>
+                <label><span class="field-label">HEIGHT <small>m</small></span><input id="zone-height" type="number" min="1" max="36" step="0.5" value="6" required /></label>
+              </div>
+              <button class="add-button" type="submit"><span aria-hidden="true">+</span> Add restricted zone</button>
+            </form>
+            <div id="zone-list" class="zone-list" aria-live="polite"></div>
+          </section>
         </aside>
 
         <section class="surface map-panel" aria-labelledby="map-heading">
           <div class="map-heading">
             <div><p class="field-label">NORTH PLANT · BUILDING 01</p><h2 id="map-heading">Assembly floor <span>60 × 36 m</span></h2></div>
-            <span class="map-live-indicator"><i></i> LIVE MAP</span>
+            <span class="map-live-indicator"><i></i> FLOOR MAP</span>
           </div>
-          <div class="map-wrap"><canvas id="admin-map" aria-label="Factory floor map displaying the most recently received sensor positions. No manually placed assets."></canvas><div id="map-empty" class="map-empty"><span>—</span><strong>Waiting for location data</strong><small>Connect a tracking feed to display current positions.</small></div></div>
-          <div class="map-legend"><span><i class="legend-worker"></i> Worker</span><span><i class="legend-forklift"></i> Mobile equipment</span><span><i class="legend-zone"></i> Restricted area</span><small>GRID 2 M <b>·</b> SENSOR REPORTED POSITIONS</small></div>
-          <div class="map-caption"><span class="caption-mark">i</span><p>Asset markers are read-only. Stale locations are dimmed and excluded from proximity alerts.</p></div>
+          <div class="map-wrap"><canvas id="admin-map" aria-label="Factory floor map showing simulated or tracker-reported positions."></canvas><div id="map-empty" class="map-empty"><span>—</span><strong>Waiting for location data</strong><small>Start Demo mode or connect a tracking feed.</small></div></div>
+          <div class="map-legend"><span><i class="legend-worker"></i> Worker</span><span><i class="legend-forklift"></i> Mobile equipment</span><span><i class="legend-zone"></i> Restricted area</span><span><i class="legend-alert"></i> Pulsing worker = safety alert</span><small>GRID 2 M <b>·</b> SIMULATED OR TRACKER POSITIONS</small></div>
+          <div class="map-caption"><span class="caption-mark">i</span><p>Alerted workers pulse to represent a device vibration. Stale locations are dimmed and excluded from proximity alerts.</p></div>
         </section>
 
         <aside class="insight-column">
           <section class="surface source-panel">
-            <div class="section-title"><div><span class="step-index">03</span><h2>Tracking feed</h2></div><span id="feed-state" class="rule-state">OFFLINE</span></div>
-            <p class="panel-copy">Connect to your site positioning gateway to receive location updates.</p>
+            <div class="section-title"><div><span class="step-index">04</span><h2>Position source</h2></div><span id="feed-state" class="rule-state">OFFLINE</span></div>
+            <p class="panel-copy">Start the built-in simulation for a hardware-free demo, or connect a site tracking feed.</p>
             <label class="field-label" for="feed-url">WEBSOCKET URL</label>
             <input id="feed-url" class="feed-url" type="url" placeholder="wss://tracking.example.com/locations" autocomplete="url" />
             <div class="feed-actions"><button id="connect-feed" class="add-button" type="button">Connect feed</button><button id="disconnect-feed" class="quiet-button" type="button" disabled>Disconnect</button></div>
+            <button id="demo-toggle" class="quiet-button demo-button" type="button">Start demo with simulator</button>
             <p id="feed-message" class="feed-message" aria-live="polite">No tracking feed connected. Locations are not available.</p>
             <details class="feed-contract"><summary>Telemetry message format</summary><pre>{
   "type": "location",
@@ -87,21 +106,21 @@
           </section>
 
           <section class="surface rules-panel">
-            <div class="section-title"><div><span class="step-index">04</span><h2>Proximity thresholds</h2></div><span class="rule-state">LIVE ONLY</span></div>
+            <div class="section-title"><div><span class="step-index">05</span><h2>Proximity thresholds</h2></div><span class="rule-state">LIVE + DEMO</span></div>
             <label class="threshold-row" for="worker-threshold"><span><i class="threshold-dot worker-dot"></i>Worker to worker</span><span class="number-input"><input id="worker-threshold" type="number" min="1" max="20" step="0.5" value="3" /><b>m</b></span></label>
             <label class="threshold-row" for="equipment-threshold"><span><i class="threshold-dot equipment-dot"></i>Worker to equipment</span><span class="number-input"><input id="equipment-threshold" type="number" min="1" max="30" step="0.5" value="5" /><b>m</b></span></label>
             <p class="rules-footnote">Only locations updated within 5 seconds are used. A stale or disconnected feed cannot be treated as a clear floor.</p>
           </section>
 
           <section class="surface alerts-panel">
-            <div class="section-title"><div><span class="step-index">05</span><h2>Safety alerts</h2></div><span id="review-state" class="review-state">NO FEED</span></div>
+            <div class="section-title"><div><span class="step-index">06</span><h2>Safety alerts</h2></div><span id="review-state" class="review-state">NO FEED</span></div>
             <p class="panel-copy">Potential close approaches detected from current telemetry.</p>
             <div id="admin-alerts" class="admin-alerts" aria-live="polite"></div>
           </section>
-          <section class="access-note"><span aria-hidden="true">!</span><p><strong>Tracking integration required</strong><br />This page displays feed data only. A validated positioning system and server-side access control are required for operational use.</p></section>
+          <section class="access-note"><span aria-hidden="true">!</span><p><strong>Demo system</strong><br />Simulator positions are fictional. The WebSocket option needs an external gateway. This page does not authenticate admins or notify workers.</p></section>
         </aside>
       </section>
-      <footer class="admin-footer">FLOORWATCH ADMIN <span>·</span> LIVE LOCATIONS REQUIRE A CONNECTED TRACKING FEED <span>·</span> NOT FOR OPERATIONAL SAFETY DECISIONS</footer>
+      <footer class="admin-footer">FLOORWATCH ADMIN <span>·</span> DEMO OR EXTERNAL TRACKING FEED <span>·</span> NOT FOR OPERATIONAL SAFETY DECISIONS</footer>
     </main>
 
     <section class="access-gate" id="access-gate" aria-labelledby="gate-title">

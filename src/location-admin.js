@@ -1,18 +1,17 @@
-const FLOOR = { width: 60, height: 36 };
-const STORAGE_KEY = "floorwatch-admin-tracked-assets-v1";
+import { ASSET_STORAGE_KEY, DEFAULT_ZONES, FLOOR, ZONE_STORAGE_KEY } from './model.js';
+import { createSimulator, stepSimulator } from './simulation.js';
+import { evaluateSafety } from './safety.js';
+import { renderFactory } from './renderer.js';
+
 const THRESHOLD_KEY = "floorwatch-admin-proximity-thresholds-v1";
 const ROLE_KEY = "floorwatch-admin-demo-role";
 const LIVE_WINDOW_MS = 5_000;
 const STALE_WINDOW_MS = 15_000;
-const zones = [
-  { id: "Z-01", name: "Robot cell", x: 45, y: 3, width: 11, height: 9 },
-  { id: "Z-02", name: "Loading bay", x: 3, y: 3, width: 10, height: 7 },
-];
+let zones = loadZones();
 
 const workspace = document.querySelector("#admin-workspace");
 const gate = document.querySelector("#access-gate");
 const canvas = document.querySelector("#admin-map");
-const context = canvas.getContext("2d");
 const trackerForm = document.querySelector("#tracker-form");
 const trackerKind = document.querySelector("#tracker-kind");
 const trackerName = document.querySelector("#tracker-name");
@@ -21,18 +20,26 @@ const inventory = document.querySelector("#inventory-list");
 const feedUrl = document.querySelector("#feed-url");
 const connectButton = document.querySelector("#connect-feed");
 const disconnectButton = document.querySelector("#disconnect-feed");
+const demoToggle = document.querySelector("#demo-toggle");
 const workerThreshold = document.querySelector("#worker-threshold");
 const equipmentThreshold = document.querySelector("#equipment-threshold");
+const zoneForm = document.querySelector("#zone-form");
+const zoneList = document.querySelector("#zone-list");
 
 let assets = loadAssets();
 let thresholds = loadThresholds();
 let socket = null;
 let connectionGeneration = 0;
 let connectionStatus = "offline";
+let demoMode = false;
+let simulator = null;
+let demoPositions = null;
+let lastDemoFrame = 0;
+let alertAnimationRunning = false;
 
 function loadAssets() {
   try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const stored = JSON.parse(localStorage.getItem(ASSET_STORAGE_KEY));
     if (Array.isArray(stored)) {
       return stored
         .filter(
@@ -62,6 +69,34 @@ function loadThresholds() {
   }
 }
 
+function loadZones() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ZONE_STORAGE_KEY));
+    if (Array.isArray(stored)) return stored.filter(validZone);
+  } catch {
+    // Start with the built-in sample zones if storage is empty or invalid.
+  }
+  return DEFAULT_ZONES.map((zone) => ({ ...zone }));
+}
+
+function validZone(zone) {
+  return zone && typeof zone.id === "string" && typeof zone.name === "string" && zone.name.trim().length > 0 &&
+    Number.isFinite(zone.x) && Number.isFinite(zone.y) &&
+    Number.isFinite(zone.width) && Number.isFinite(zone.height) &&
+    zone.width > 0 && zone.height > 0 && zone.x >= 0 && zone.y >= 0 &&
+    zone.x + zone.width <= FLOOR.width && zone.y + zone.height <= FLOOR.height;
+}
+
+function persistZones() {
+  try {
+    localStorage.setItem(ZONE_STORAGE_KEY, JSON.stringify(zones));
+    return true;
+  } catch {
+    setFeedMessage("Browser storage is unavailable. Zone changes will not persist.", "error");
+    return false;
+  }
+}
+
 function boundedNumber(value, fallback, minimum, maximum) {
   const number = Number(value);
   return Number.isFinite(number)
@@ -72,7 +107,7 @@ function boundedNumber(value, fallback, minimum, maximum) {
 function persistAssets() {
   try {
     localStorage.setItem(
-      STORAGE_KEY,
+      ASSET_STORAGE_KEY,
       JSON.stringify(assets.map(({ location, ...asset }) => asset)),
     );
     return true;
@@ -111,6 +146,7 @@ function setConnectionStatus(status, message) {
     offline: "TRACKING OFFLINE",
     connecting: "CONNECTING",
     live: "TRACKING LIVE",
+    demo: "DEMO SIMULATION",
     error: "CONNECTION ERROR",
   };
 
@@ -118,9 +154,11 @@ function setConnectionStatus(status, message) {
   badge.textContent = status.toUpperCase();
   dot.className = `connection-dot ${status}`;
   badge.classList.toggle("connected", status === "live");
+  badge.classList.toggle("demo", status === "demo");
   badge.classList.toggle("danger", status === "error");
   connectButton.disabled = status === "connecting" || status === "live";
   disconnectButton.disabled = status !== "connecting" && status !== "live";
+  if (demoToggle) demoToggle.textContent = status === "demo" ? "Stop demo" : "Start demo";
   if (message) setFeedMessage(message, status === "error" ? "error" : "");
   render();
 }
@@ -133,69 +171,99 @@ function liveAssets(now = Date.now()) {
 }
 
 function calculateAlerts(now = Date.now()) {
-  const workers = assets.filter(
-    (asset) =>
-      asset.type === "worker" &&
-      asset.location &&
-      now - asset.location.timestamp <= LIVE_WINDOW_MS,
-  );
-  const equipment = assets.filter(
-    (asset) =>
-      asset.type === "equipment" &&
-      asset.location &&
-      now - asset.location.timestamp <= LIVE_WINDOW_MS,
-  );
-  const events = [];
-
-  for (let first = 0; first < workers.length; first += 1) {
-    for (let second = first + 1; second < workers.length; second += 1) {
-      const worker = workers[first];
-      const other = workers[second];
-      const distance = distanceBetween(worker.location, other.location);
-      if (distance <= thresholds.workers) {
-        events.push({
-          severity: distance <= thresholds.workers * 0.5 ? "danger" : "warning",
-          title: "Worker proximity",
-          detail: `${worker.name} and ${other.name} are ${distance.toFixed(1)} m apart.`,
-        });
-      }
-    }
-
-    const worker = workers[first];
-    for (const vehicle of equipment) {
-      const distance = distanceBetween(worker.location, vehicle.location);
-      if (distance <= thresholds.equipment) {
-        events.push({
-          severity:
-            distance <= thresholds.equipment * 0.5 ? "danger" : "warning",
-          title: "Equipment proximity",
-          detail: `${vehicle.name} is ${distance.toFixed(1)} m from ${worker.name}.`,
-        });
-      }
-    }
-
-    for (const zone of zones) {
-      const location = worker.location;
-      if (
-        location.x >= zone.x &&
-        location.x <= zone.x + zone.width &&
-        location.y >= zone.y &&
-        location.y <= zone.y + zone.height
-      ) {
-        events.push({
-          severity: "danger",
-          title: "Restricted area entry",
-          detail: `${worker.name} is inside ${zone.name}.`,
-        });
-      }
-    }
-  }
-
-  return events;
+  if (connectionStatus !== "live" && connectionStatus !== "demo") return [];
+  const currentAssets = liveAssets(now);
+  const state = {
+    workers: assets.filter((asset) => asset.type === "worker").map(({ id, name }) => ({ id, name })),
+    vehicles: assets.filter((asset) => asset.type === "equipment").map(({ id, name, kind }) => ({ id, name, kind })),
+    zones,
+  };
+  const fresh = new Set(currentAssets.map((asset) => asset.id));
+  const positions = {
+    workers: currentAssets.filter((asset) => asset.type === "worker").map(({ id, location }) => ({ id, x: location.x, y: location.y })),
+    vehicles: currentAssets.filter((asset) => asset.type === "equipment").map(({ id, location }) => ({ id, x: location.x, y: location.y })),
+  };
+  // Keep records whose positions are stale out of the evaluation snapshot.
+  state.workers = state.workers.filter((worker) => fresh.has(worker.id));
+  state.vehicles = state.vehicles.filter((vehicle) => fresh.has(vehicle.id));
+  return evaluateSafety(state, positions, {
+    workerWarningMeters: thresholds.workers,
+    equipmentWarningMeters: thresholds.equipment,
+    criticalRatio: 0.5,
+  });
 }
 
-function distanceBetween(first, second) {
-  return Math.hypot(first.x - second.x, first.y - second.y);
+function simulatorState() {
+  return {
+    workers: assets.filter((asset) => asset.type === "worker").map(({ id, name }) => ({ id, name })),
+    vehicles: assets.filter((asset) => asset.type === "equipment").map(({ id, name }) => ({ id, name, kind: "Mobile equipment" })),
+    zones,
+  };
+}
+
+function seedDemoAssets() {
+  if (assets.length) return;
+  assets = [
+    { id: "demo-worker-01", type: "worker", name: "Avery Chen", trackerId: "DEMO-W-01", location: null },
+    { id: "demo-worker-02", type: "worker", name: "Morgan Diaz", trackerId: "DEMO-W-02", location: null },
+    { id: "demo-worker-03", type: "worker", name: "Sam Patel", trackerId: "DEMO-W-03", location: null },
+    { id: "demo-equipment-01", type: "equipment", name: "Forklift 01", trackerId: "DEMO-FL-01", location: null },
+    { id: "demo-equipment-02", type: "equipment", name: "Tugger 02", trackerId: "DEMO-TG-02", location: null },
+  ];
+  persistAssets();
+}
+
+function applyDemoPositions(positions, timestamp = Date.now()) {
+  const byId = new Map([
+    ...(positions?.workers || []).map((position) => [position.id, position]),
+    ...(positions?.vehicles || []).map((position) => [position.id, position]),
+  ]);
+  for (const asset of assets) {
+    const position = byId.get(asset.id);
+    asset.location = position
+      ? { x: position.x, y: position.y, timestamp, source: "demo" }
+      : null;
+  }
+}
+
+function startDemo() {
+  if (demoMode) return;
+  connectionGeneration += 1;
+  if (socket) {
+    const activeSocket = socket;
+    socket = null;
+    activeSocket.close();
+  }
+  seedDemoAssets();
+  demoMode = true;
+  simulator = createSimulator(simulatorState());
+  demoPositions = stepSimulator(simulator, simulatorState(), 0);
+  applyDemoPositions(demoPositions);
+  lastDemoFrame = 0;
+  setConnectionStatus("demo", "Demo mode is generating simulated positions. No hardware is connected.");
+  requestAnimationFrame(runDemoFrame);
+}
+
+function stopDemo() {
+  if (!demoMode) return;
+  demoMode = false;
+  simulator = null;
+  demoPositions = null;
+  for (const asset of assets) {
+    if (asset.location?.source === "demo") asset.location = null;
+  }
+  setConnectionStatus("offline", "Demo stopped. Connect a tracking feed to receive real positions.");
+}
+
+function runDemoFrame(now) {
+  if (!demoMode) return;
+  const dt = lastDemoFrame ? Math.min((now - lastDemoFrame) / 1000, 0.05) : 0;
+  lastDemoFrame = now;
+  const state = simulatorState();
+  demoPositions = stepSimulator(simulator, state, dt);
+  applyDemoPositions(demoPositions);
+  render();
+  requestAnimationFrame(runDemoFrame);
 }
 
 function formatAge(timestamp, now = Date.now()) {
@@ -248,18 +316,19 @@ function renderAlerts(events, now = Date.now()) {
   const alertList = document.querySelector("#admin-alerts");
   const review = document.querySelector("#review-state");
   const freshCount = liveAssets(now).length;
+  const sourceAvailable = connectionStatus === "live" || connectionStatus === "demo";
 
   document.querySelector("#admin-alert-count").textContent = String(
     events.length,
   ).padStart(2, "0");
-  if (connectionStatus !== "live") {
-    review.textContent = "NO FEED";
+  if (!sourceAvailable) {
+    review.textContent = connectionStatus === "error" ? "FEED ERROR" : "NO FEED";
   } else if (freshCount === 0) {
     review.textContent = "NO DATA";
   } else {
-    review.textContent = events.length
-      ? `${events.length} REVIEW${events.length === 1 ? "" : "S"}`
-      : "CLEAR";
+    review.textContent = connectionStatus === "demo"
+      ? (events.length ? `${events.length} DEMO ALERT${events.length === 1 ? "" : "S"}` : "DEMO CLEAR")
+      : (events.length ? `${events.length} REVIEW${events.length === 1 ? "" : "S"}` : "CLEAR");
   }
   review.classList.toggle(
     "warning",
@@ -271,9 +340,9 @@ function renderAlerts(events, now = Date.now()) {
       connectionStatus === "error",
   );
 
-  if (connectionStatus !== "live" || freshCount === 0) {
+  if (!sourceAvailable || freshCount === 0) {
     alertList.innerHTML =
-      '<p class="alert-clear">Live telemetry unavailable. A clear floor cannot be confirmed.</p>';
+      '<p class="alert-clear">No current positions are available. A clear floor cannot be confirmed.</p>';
   } else if (events.length) {
     alertList.innerHTML = events
       .map(
@@ -283,14 +352,22 @@ function renderAlerts(events, now = Date.now()) {
       .join("");
   } else {
     alertList.innerHTML =
-      '<p class="alert-clear">No proximity events in the current live positions.</p>';
+      `<p class="alert-clear">No safety events in the current ${connectionStatus === "demo" ? "simulated" : "live"} positions.</p>`;
   }
+}
+
+function renderZones() {
+  document.querySelector("#zone-count").textContent = `${zones.length} ZONES`;
+  zoneList.innerHTML = zones.length
+    ? zones.map((zone) => `<div class="zone-row"><span>${escapeHtml(zone.name)}</span><small>${zone.width} × ${zone.height} m</small><button type="button" data-zone-id="${escapeHtml(zone.id)}" aria-label="Remove zone ${escapeHtml(zone.name)}">×</button></div>`).join("")
+    : '<p class="inventory-empty">No restricted zones configured.</p>';
 }
 
 function render(now = Date.now()) {
   const workers = assets.filter((asset) => asset.type === "worker");
   const equipment = assets.filter((asset) => asset.type === "equipment");
   const liveCount = liveAssets(now).length;
+  const events = calculateAlerts(now);
 
   document.querySelector("#admin-worker-count").textContent = String(
     workers.length,
@@ -304,8 +381,25 @@ function render(now = Date.now()) {
   document.querySelector("#coverage-note").textContent =
     `of ${assets.length} registered`;
   renderInventory(now);
-  renderAlerts(calculateAlerts(now), now);
-  drawMap(now);
+  renderZones();
+  renderAlerts(events, now);
+  drawMap(now, events);
+  if (connectionStatus === "live" && events.length && !alertAnimationRunning) {
+    alertAnimationRunning = true;
+    requestAnimationFrame(animateAlertMap);
+  }
+}
+
+function animateAlertMap() {
+  if (connectionStatus !== "live") {
+    alertAnimationRunning = false;
+    return;
+  }
+  const now = Date.now();
+  const events = calculateAlerts(now);
+  drawMap(now, events);
+  if (events.length) requestAnimationFrame(animateAlertMap);
+  else alertAnimationRunning = false;
 }
 
 function escapeHtml(value) {
@@ -322,150 +416,20 @@ function escapeHtml(value) {
   );
 }
 
-function drawMap(now = Date.now()) {
-  const rect = canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  const pixelWidth = Math.round(rect.width * dpr);
-  const pixelHeight = Math.round(rect.height * dpr);
-  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-    canvas.width = pixelWidth;
-    canvas.height = pixelHeight;
-  }
-  context.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-  const padding = 23;
-  const scale = Math.min(
-    (rect.width - padding * 2) / FLOOR.width,
-    (rect.height - padding * 2) / FLOOR.height,
-  );
-  const mapWidth = FLOOR.width * scale;
-  const mapHeight = FLOOR.height * scale;
-  const ox = (rect.width - mapWidth) / 2;
-  const oy = (rect.height - mapHeight) / 2;
-  const px = (x) => ox + x * scale;
-  const py = (y) => oy + y * scale;
-
-  context.clearRect(0, 0, rect.width, rect.height);
-  context.fillStyle = "#202d28";
-  context.fillRect(0, 0, rect.width, rect.height);
-  context.fillStyle = "#27362f";
-  context.fillRect(ox, oy, mapWidth, mapHeight);
-  context.save();
-  context.beginPath();
-  context.rect(ox, oy, mapWidth, mapHeight);
-  context.clip();
-  drawGrid(px, py, ox, oy, mapWidth, mapHeight);
-  drawFixtures(px, py, scale);
-  drawZones(px, py, scale);
-
-  for (const asset of assets) {
-    if (!asset.location) continue;
-    const isLive = assetStatus(asset, now) === "LIVE";
-    drawAsset(asset, px(asset.location.x), py(asset.location.y), scale, isLive);
-  }
-
-  context.restore();
-  context.strokeStyle = "#61746a";
-  context.lineWidth = 1;
-  context.strokeRect(ox, oy, mapWidth, mapHeight);
+function drawMap(now = Date.now(), events = []) {
+  const state = {
+    workers: assets.filter((asset) => asset.type === "worker").map(({ id, name }) => ({ id, name })),
+    vehicles: assets.filter((asset) => asset.type === "equipment").map(({ id, name }) => ({ id, name })),
+    zones,
+  };
+  const positions = {
+    workers: assets.filter((asset) => asset.type === "worker" && asset.location).map(({ id, location }) => ({ id, x: location.x, y: location.y, stale: assetStatus({ location }, now) !== "LIVE" })),
+    vehicles: assets.filter((asset) => asset.type === "equipment" && asset.location).map(({ id, location }) => ({ id, x: location.x, y: location.y, stale: assetStatus({ location }, now) !== "LIVE" })),
+  };
+  renderFactory(canvas, state, positions, events);
   document.querySelector("#map-empty").hidden = assets.some(
     (asset) => asset.location && assetStatus(asset, now) === "LIVE",
   );
-}
-
-function drawGrid(px, py, ox, oy, mapWidth, mapHeight) {
-  context.strokeStyle = "rgba(199,220,202,.10)";
-  context.lineWidth = 1;
-  for (let x = 0; x <= FLOOR.width; x += 2) {
-    context.beginPath();
-    context.moveTo(px(x), oy);
-    context.lineTo(px(x), oy + mapHeight);
-    context.stroke();
-  }
-  for (let y = 0; y <= FLOOR.height; y += 2) {
-    context.beginPath();
-    context.moveTo(ox, py(y));
-    context.lineTo(ox + mapWidth, py(y));
-    context.stroke();
-  }
-}
-
-function drawFixtures(px, py, scale) {
-  drawFixture(px, py, scale, 15, 5, 8, 4, "PARTS");
-  drawFixture(px, py, scale, 17, 25, 8, 5, "ASSEMBLY");
-  drawFixture(px, py, scale, 31, 5, 7, 4, "STORAGE");
-  drawFixture(px, py, scale, 32, 25, 9, 5, "PACKING");
-}
-
-function drawFixture(px, py, scale, x, y, width, height, label) {
-  context.fillStyle = "#34453b";
-  context.strokeStyle = "#4b5c4f";
-  context.lineWidth = 1;
-  context.fillRect(px(x), py(y), width * scale, height * scale);
-  context.strokeRect(px(x), py(y), width * scale, height * scale);
-  context.fillStyle = "#a8b8a8";
-  context.font = '8px "IBM Plex Mono", monospace';
-  context.fillText(label, px(x) + 5, py(y) + 12);
-}
-
-function drawZones(px, py, scale) {
-  for (const zone of zones) {
-    context.fillStyle = "rgba(231,111,91,.21)";
-    context.fillRect(
-      px(zone.x),
-      py(zone.y),
-      zone.width * scale,
-      zone.height * scale,
-    );
-    context.strokeStyle = "#e58670";
-    context.lineWidth = 1;
-    context.setLineDash([5, 4]);
-    context.strokeRect(
-      px(zone.x),
-      py(zone.y),
-      zone.width * scale,
-      zone.height * scale,
-    );
-    context.setLineDash([]);
-    context.fillStyle = "#f3b3a1";
-    context.font = '9px "IBM Plex Mono", monospace';
-    context.fillText(zone.name.toUpperCase(), px(zone.x) + 5, py(zone.y) + 12);
-  }
-}
-
-function drawAsset(asset, x, y, scale, isLive) {
-  context.save();
-  context.globalAlpha = isLive ? 1 : 0.35;
-  if (asset.type === "equipment") {
-    context.fillStyle = "#edb54e";
-    context.fillRect(
-      x - scale * 0.9,
-      y - scale * 0.55,
-      scale * 1.8,
-      scale * 1.1,
-    );
-    context.fillStyle = "#614d2b";
-    context.fillRect(
-      x - scale * 0.12,
-      y - scale * 0.36,
-      scale * 0.72,
-      scale * 0.72,
-    );
-  } else {
-    context.fillStyle = "#76dba6";
-    context.beginPath();
-    context.arc(x, y, Math.max(4, scale * 0.34), 0, Math.PI * 2);
-    context.fill();
-    context.strokeStyle = "#192820";
-    context.lineWidth = 1.5;
-    context.stroke();
-  }
-  context.fillStyle = "#e4ede2";
-  context.font = '9px "IBM Plex Mono", monospace';
-  context.fillText(asset.name, x + 8, y - 7);
-  context.restore();
 }
 
 function normalizeTimestamp(value) {
@@ -508,6 +472,7 @@ function applyLocation(update) {
     x: update.x,
     y: update.y,
     timestamp,
+    source: "feed",
     ...(Number.isFinite(accuracyMeters) && accuracyMeters >= 0
       ? { accuracyMeters }
       : {}),
@@ -541,6 +506,7 @@ function handleTelemetryMessage(rawMessage) {
 }
 
 function connectFeed() {
+  if (demoMode) stopDemo();
   let endpoint;
   try {
     endpoint = new URL(feedUrl.value.trim());
@@ -648,6 +614,45 @@ trackerForm.addEventListener("submit", (event) => {
   persistAssets();
   trackerName.value = "";
   trackerId.value = "";
+  render();
+});
+
+demoToggle.addEventListener("click", () => {
+  if (demoMode) stopDemo();
+  else startDemo();
+});
+
+zoneForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = document.querySelector("#zone-name").value.trim();
+  const zone = {
+    id: `ZONE-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name,
+    x: Number(document.querySelector("#zone-x").value),
+    y: Number(document.querySelector("#zone-y").value),
+    width: Number(document.querySelector("#zone-width").value),
+    height: Number(document.querySelector("#zone-height").value),
+  };
+  if (!validZone(zone)) {
+    setFeedMessage("Zone must have a name, positive size, and fit inside the 60 × 36 m floor.", "error");
+    return;
+  }
+  zones.push(zone);
+  persistZones();
+  zoneForm.reset();
+  document.querySelector("#zone-x").value = "10";
+  document.querySelector("#zone-y").value = "10";
+  document.querySelector("#zone-width").value = "8";
+  document.querySelector("#zone-height").value = "6";
+  setFeedMessage(`Restricted zone “${zone.name}” added.`);
+  render();
+});
+
+zoneList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-zone-id]");
+  if (!button) return;
+  zones = zones.filter((zone) => zone.id !== button.dataset.zoneId);
+  persistZones();
   render();
 });
 
