@@ -1,84 +1,71 @@
-# Floorwatch — factory safety demo
+# Floorwatch
 
-Floorwatch demonstrates worker/equipment proximity alerts and restricted-zone monitoring on a simulated factory floor. It can also accept normalized positions from an external WebSocket tracking feed. The browser demo does not connect to actual sensors or notify workers and is not for operational safety decisions.
+**Feel the danger before you see it.**
 
-## Run
+A forklift comes around a corner. The worker cannot hear it, because the warehouse is too loud. The worker does not look at a screen, because the worker is at work. The driver cannot see the worker behind the shelf.
 
-From this directory, run `python3 -m http.server 8000`, then open `http://localhost:8000`.
+Floorwatch makes the phone in the worker's pocket vibrate. At the same time, the phone of the driver vibrates. Both people stop before an accident occurs.
 
-- `index.html` is the animated factory overview.
-- `admin.html` is the admin workspace. Register assets, add restricted zones, and choose **Start demo with simulator** to see the registered assets move without hardware. If the asset list is empty, Demo mode adds a small sample roster.
-- The admin workspace can instead connect to a compatible external WebSocket feed.
+![Floorwatch demo dashboard: workers, forklifts, 7 m danger circles, and restricted zones on a factory floor](docs/dashboard.png)
 
-## How the pieces fit
+## No app. No screen. Only a signal.
 
-The admin workspace owns asset records (names, IDs, tracker IDs, and zones). The simulator reads worker/equipment records and produces fake positions for them. A future tracking adapter can provide positions instead. Both simulated and feed positions go to the same safety evaluator, which returns events for the dashboard.
+Workers and drivers do not open an app. They do not look at a screen. They do not touch the phone. The phone stays in the pocket and sends a vibration when there is danger.
 
-Coordinates and zone dimensions are meters from the floor's top-left. The shared record and position shapes are:
+Each person already has a device. Floorwatch uses that device as a sensor and as an alarm.
 
-```js
-state = {
-  workers: [{ id, name }],
-  vehicles: [{ id, name, kind }],
-  zones: [{ id, name, x, y, width, height }]
-}
+We made Floorwatch for the **"No App"** track: interfaces for people who will never open an app, such as warehouse workers and drivers.
 
-positions = {
-  workers: [{ id, x, y }],
-  vehicles: [{ id, x, y, heading }]
-}
-```
+## How it works
 
-`src/simulation.js` exports `createSimulator(state)` and `stepSimulator(simulator, state, dt)`. It only produces positions; it does not add or remove app records. `src/safety.js` exports `evaluateSafety(state, positions, thresholds)`. It does not depend on where positions came from. `src/renderer.js` draws the shared floor state and position snapshot.
+1. Each worker and each vehicle has a device. In this demo, the device is a phone. On a real site, it can also be a tag, a badge, or a watch.
+2. The system finds the position of each device on the floor.
+3. Safety rules compare the positions many times each second.
+4. When a vehicle comes near a worker, the system sends a signal to the two devices.
+5. Only the people in danger feel the vibration. All other people continue their work.
 
-## WebSocket input
+## The vibration language
 
-Register each tracked person's or vehicle's tracker ID in Admin, then connect a `ws://` or `wss://` endpoint. A location message looks like:
+Each danger has a different pattern. A worker can identify the danger without a look at the phone.
 
-```json
-{
-  "type": "location",
-  "trackerId": "TAG-1042",
-  "x": 18.4,
-  "y": 12.7,
-  "timestamp": "2026-10-24T16:20:00Z",
-  "accuracyMeters": 0.8
-}
-```
+| Danger | Who feels it | Pattern |
+|---|---|---|
+| A vehicle is less than 7 m from a worker | the worker and the driver | 1 long buzz |
+| A vehicle is less than 3.5 m from a worker | the worker and the driver | 3 long buzzes, again every 1.5 s until the danger stops |
+| A worker goes into a restricted zone | the worker | 2 sharp taps and 1 buzz, again every 2 s until the worker goes out |
+| The danger stops | each person who felt an alert | 1 light tap |
 
-A snapshot can wrap messages in `{"type":"snapshot","locations":[...]}`. Unknown tracker IDs, invalid/out-of-floor positions, stale messages, and out-of-order updates are ignored. Positions older than five seconds are excluded from alert evaluation. The repository does not include a WebSocket server or real positioning hardware; use Demo mode for the hackathon presentation.
+If there are two dangers at the same time, the phone gives the pattern of the worse danger.
 
-## Current implementation
+## About the dashboard and the admin console
 
-- Worker and mobile equipment registration/removal in Admin, saved to this browser's `localStorage`. The overview reads those records when it loads and responds to changes from another open tab.
-- Add/remove rectangular restricted zones in Admin, also saved in `localStorage`.
-- Demo mode seeds sample assets if the registry is empty, animates registered records, and updates the map and alerts.
-- Workers with active alerts show animated ripple rings on the map as a visual stand-in for a phone/device vibration.
-- WebSocket location feed option with basic message validation and stale-position handling.
-- Shared proximity and geofence evaluator used by both the simulator overview and the Admin workspace.
-- Proximity thresholds can be changed in Admin; the default geofence zones are editable through the zone form.
+**The dashboard and the admin console are not the product.** We made them only for this demo.
 
-## File map
+- **The simulator** moves workers and vehicles on a test floor. It replaces real position data, because we do not have indoor position hardware at the hackathon.
+- **The admin console** registers the people, the vehicles, and the restricted zones of a site. A safety manager does this one time.
+- **The dashboard** (the screenshot above) shows the floor from above. It lets you see what the phones feel. A pulse around a worker on the map is a vibration in a real pocket.
 
-- `src/model.js`: floor dimensions, default zones, and initial demo records.
-- `src/simulation.js`: deterministic simulated positions and movement.
-- `src/safety.js`: proximity/geofence event calculation, independent of the position source.
-- `src/renderer.js`: canvas floor, aisles, work areas, entities, and restricted-zone drawing.
-- `src/main.js`: simulator overview animation loop.
-- `src/location-admin.js`: admin UI logic, local browser storage, simulator mode, and WebSocket adapter.
-- `admin.html`, `admin.css`: admin workspace markup and styling.
-- `index.html`, `styles.css`: simulator overview markup and styling.
+On a real site, nobody must watch this map. The devices do the work.
 
-`src/admin.js` is an older, unused admin editor; `admin.html` currently loads `src/location-admin.js`. Avoid developing features in `src/admin.js` unless the team intentionally switches the active admin page to it.
+## What is real and what is simulated
 
-## Three-person task split
+| Real | Simulated |
+|---|---|
+| Vibration on real iPhones | The positions of people and vehicles |
+| The safety rules | The movement of people and vehicles |
+| The live link from the rules to each phone, in less than a second | |
 
-1. **Simulator and map:** own `src/simulation.js` and `src/renderer.js`. Improve worker/equipment movement and factory-floor visuals. Keep record creation and safety decisions out of these modules.
-2. **Shared data and safety:** own `src/model.js` and `src/safety.js`. Keep entity/position shapes stable and add safety rules using the normalized `positions` input.
-3. **Admin and integration:** own `admin.html`, `admin.css`, `src/location-admin.js`, and `src/main.js`. Maintain asset/zone controls, connect the selected position source to the shared safety and rendering modules, and present events clearly.
+## Next steps
 
-Keep these file boundaries when working in parallel. If an interface needs to change, update the shared shape and its call sites in one coordinated commit.
+- Get indoor positions from UWB or BLE tags, with an accuracy of less than 1 m.
+- Send the signal to watches, badges, and safety vests.
+- Make the phone vibrate when it is locked. This needs a native app.
+- Show the direction of the danger, for example "vehicle behind you".
 
-## Limits
+## Run it
 
-Admin data is stored only in the current browser; there is no database or server-side account system. The admin entry screen is a demo role gate, not authentication. There is no worker phone UI or push notification path. Sensor accuracy, latency, device failure, privacy, and site-specific safety requirements are outside this prototype.
+- To start the dashboard, the relay, and the phone app, read [Run the demo](TECHNICAL.md#run-the-demo).
+- To do the demo with three phones, read [Demo with phones: checklist](TECHNICAL.md#demo-with-phones-checklist).
+- The architecture and the data formats are also in [TECHNICAL.md](TECHNICAL.md).
+
+> Floorwatch is a hackathon prototype. Do not use it for real safety decisions.
