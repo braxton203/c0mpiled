@@ -35,7 +35,6 @@ let demoMode = false;
 let simulator = null;
 let demoPositions = null;
 let lastDemoFrame = 0;
-let alertAnimationRunning = false;
 
 function loadAssets() {
   try {
@@ -133,6 +132,7 @@ function persistThresholds() {
 
 function setFeedMessage(message, state = "") {
   const element = document.querySelector("#feed-message");
+  if (!element) return;
   element.textContent = message;
   element.classList.toggle("error", state === "error");
 }
@@ -150,14 +150,16 @@ function setConnectionStatus(status, message) {
     error: "CONNECTION ERROR",
   };
 
-  label.textContent = labels[status];
-  badge.textContent = status.toUpperCase();
-  dot.className = `connection-dot ${status}`;
-  badge.classList.toggle("connected", status === "live");
-  badge.classList.toggle("demo", status === "demo");
-  badge.classList.toggle("danger", status === "error");
-  connectButton.disabled = status === "connecting" || status === "live";
-  disconnectButton.disabled = status !== "connecting" && status !== "live";
+  if (label) label.textContent = labels[status];
+  if (badge) {
+    badge.textContent = status.toUpperCase();
+    badge.classList.toggle("connected", status === "live");
+    badge.classList.toggle("demo", status === "demo");
+    badge.classList.toggle("danger", status === "error");
+  }
+  if (dot) dot.className = `connection-dot ${status}`;
+  if (connectButton) connectButton.disabled = status === "connecting" || status === "live";
+  if (disconnectButton) disconnectButton.disabled = status !== "connecting" && status !== "live";
   if (demoToggle) demoToggle.textContent = status === "demo" ? "Stop demo" : "Start demo";
   if (message) setFeedMessage(message, status === "error" ? "error" : "");
   render();
@@ -168,29 +170,6 @@ function liveAssets(now = Date.now()) {
     (asset) =>
       asset.location && now - asset.location.timestamp <= LIVE_WINDOW_MS,
   );
-}
-
-function calculateAlerts(now = Date.now()) {
-  if (connectionStatus !== "live" && connectionStatus !== "demo") return [];
-  const currentAssets = liveAssets(now);
-  const state = {
-    workers: assets.filter((asset) => asset.type === "worker").map(({ id, name }) => ({ id, name })),
-    vehicles: assets.filter((asset) => asset.type === "equipment").map(({ id, name, kind }) => ({ id, name, kind })),
-    zones,
-  };
-  const fresh = new Set(currentAssets.map((asset) => asset.id));
-  const positions = {
-    workers: currentAssets.filter((asset) => asset.type === "worker").map(({ id, location }) => ({ id, x: location.x, y: location.y })),
-    vehicles: currentAssets.filter((asset) => asset.type === "equipment").map(({ id, location }) => ({ id, x: location.x, y: location.y })),
-  };
-  // Keep records whose positions are stale out of the evaluation snapshot.
-  state.workers = state.workers.filter((worker) => fresh.has(worker.id));
-  state.vehicles = state.vehicles.filter((vehicle) => fresh.has(vehicle.id));
-  return evaluateSafety(state, positions, {
-    workerWarningMeters: thresholds.workers,
-    equipmentWarningMeters: thresholds.equipment,
-    criticalRatio: 0.5,
-  });
 }
 
 function simulatorState() {
@@ -288,20 +267,9 @@ function renderInventory(now = Date.now()) {
       const items = assets.filter((asset) => asset.type === group.type);
       const itemRows = items
         .map((asset) => {
-          const status = assetStatus(asset, now);
-          const meta = asset.location
-            ? `${asset.location.x.toFixed(1)}, ${asset.location.y.toFixed(1)} m`
-            : "Position unavailable";
-          const accuracy = asset.location?.accuracyMeters;
-          const extra = asset.location
-            ? `${formatAge(asset.location.timestamp, now)}${accuracy === undefined ? "" : ` · ±${accuracy.toFixed(1)} m`}`
-            : asset.trackerId;
-
           return `<article class="inventory-item">
         <i class="inventory-dot ${group.type}"></i>
-        <span class="inventory-description"><strong class="inventory-name">${escapeHtml(asset.name)}</strong><small>${escapeHtml(asset.trackerId)} · ${escapeHtml(meta)}</small></span>
-        <span class="asset-state ${status.toLowerCase().replace(" ", "-")}">${status}</span>
-        <small class="inventory-age">${escapeHtml(extra)}</small>
+        <span class="inventory-description"><strong class="inventory-name">${escapeHtml(asset.name)}</strong><small>${escapeHtml(asset.trackerId)}</small></span>
         <button type="button" class="remove-asset" data-id="${escapeHtml(asset.id)}" aria-label="Remove ${escapeHtml(asset.name)}" title="Remove tracked asset">×</button>
       </article>`;
         })
@@ -310,50 +278,6 @@ function renderInventory(now = Date.now()) {
       return `<div class="inventory-group-label">${group.title} · ${items.length}</div>${itemRows || '<p class="inventory-empty">No trackers registered.</p>'}`;
     })
     .join("");
-}
-
-function renderAlerts(events, now = Date.now()) {
-  const alertList = document.querySelector("#admin-alerts");
-  const review = document.querySelector("#review-state");
-  const freshCount = liveAssets(now).length;
-  const sourceAvailable = connectionStatus === "live" || connectionStatus === "demo";
-
-  document.querySelector("#admin-alert-count").textContent = String(
-    events.length,
-  ).padStart(2, "0");
-  if (!sourceAvailable) {
-    review.textContent = connectionStatus === "error" ? "FEED ERROR" : "NO FEED";
-  } else if (freshCount === 0) {
-    review.textContent = "NO DATA";
-  } else {
-    review.textContent = connectionStatus === "demo"
-      ? (events.length ? `${events.length} DEMO ALERT${events.length === 1 ? "" : "S"}` : "DEMO CLEAR")
-      : (events.length ? `${events.length} REVIEW${events.length === 1 ? "" : "S"}` : "CLEAR");
-  }
-  review.classList.toggle(
-    "warning",
-    events.some((event) => event.severity === "warning"),
-  );
-  review.classList.toggle(
-    "danger",
-    events.some((event) => event.severity === "danger") ||
-      connectionStatus === "error",
-  );
-
-  if (!sourceAvailable || freshCount === 0) {
-    alertList.innerHTML =
-      '<p class="alert-clear">No current positions are available. A clear floor cannot be confirmed.</p>';
-  } else if (events.length) {
-    alertList.innerHTML = events
-      .map(
-        (event) =>
-          `<article class="alert-card ${event.severity}"><div class="alert-title">${escapeHtml(event.title)}</div><div class="alert-detail">${escapeHtml(event.detail)}</div></article>`,
-      )
-      .join("");
-  } else {
-    alertList.innerHTML =
-      `<p class="alert-clear">No safety events in the current ${connectionStatus === "demo" ? "simulated" : "live"} positions.</p>`;
-  }
 }
 
 function renderZones() {
@@ -367,39 +291,15 @@ function render(now = Date.now()) {
   const workers = assets.filter((asset) => asset.type === "worker");
   const equipment = assets.filter((asset) => asset.type === "equipment");
   const liveCount = liveAssets(now).length;
-  const events = calculateAlerts(now);
-
   document.querySelector("#admin-worker-count").textContent = String(
     workers.length,
   ).padStart(2, "0");
   document.querySelector("#admin-equipment-count").textContent = String(
     equipment.length,
   ).padStart(2, "0");
-  document.querySelector("#admin-live-count").textContent = String(
-    liveCount,
-  ).padStart(2, "0");
-  document.querySelector("#coverage-note").textContent =
-    `of ${assets.length} registered`;
   renderInventory(now);
   renderZones();
-  renderAlerts(events, now);
-  drawMap(now, events);
-  if (connectionStatus === "live" && events.length && !alertAnimationRunning) {
-    alertAnimationRunning = true;
-    requestAnimationFrame(animateAlertMap);
-  }
-}
-
-function animateAlertMap() {
-  if (connectionStatus !== "live") {
-    alertAnimationRunning = false;
-    return;
-  }
-  const now = Date.now();
-  const events = calculateAlerts(now);
-  drawMap(now, events);
-  if (events.length) requestAnimationFrame(animateAlertMap);
-  else alertAnimationRunning = false;
+  drawMap(now);
 }
 
 function escapeHtml(value) {
@@ -417,6 +317,7 @@ function escapeHtml(value) {
 }
 
 function drawMap(now = Date.now(), events = []) {
+    if (!canvas) return;
   const state = {
     workers: assets.filter((asset) => asset.type === "worker").map(({ id, name }) => ({ id, name })),
     vehicles: assets.filter((asset) => asset.type === "equipment").map(({ id, name }) => ({ id, name })),
@@ -427,7 +328,8 @@ function drawMap(now = Date.now(), events = []) {
     vehicles: assets.filter((asset) => asset.type === "equipment" && asset.location).map(({ id, location }) => ({ id, x: location.x, y: location.y, stale: assetStatus({ location }, now) !== "LIVE" })),
   };
   renderFactory(canvas, state, positions, events);
-  document.querySelector("#map-empty").hidden = assets.some(
+  const emptyState = document.querySelector("#map-empty");
+  if (emptyState) emptyState.hidden = assets.some(
     (asset) => asset.location && assetStatus(asset, now) === "LIVE",
   );
 }
@@ -509,7 +411,7 @@ function connectFeed() {
   if (demoMode) stopDemo();
   let endpoint;
   try {
-    endpoint = new URL(feedUrl.value.trim());
+    endpoint = new URL(feedUrl?.value.trim() || "");
   } catch {
     setConnectionStatus(
       "error",
@@ -617,7 +519,7 @@ trackerForm.addEventListener("submit", (event) => {
   render();
 });
 
-demoToggle.addEventListener("click", () => {
+demoToggle?.addEventListener("click", () => {
   if (demoMode) stopDemo();
   else startDemo();
 });
@@ -664,9 +566,9 @@ inventory.addEventListener("click", (event) => {
   render();
 });
 
-connectButton.addEventListener("click", connectFeed);
-disconnectButton.addEventListener("click", disconnectFeed);
-feedUrl.addEventListener("change", () => {
+connectButton?.addEventListener("click", connectFeed);
+disconnectButton?.addEventListener("click", disconnectFeed);
+feedUrl?.addEventListener("change", () => {
   try {
     localStorage.setItem(
       "floorwatch-tracking-feed-url-v1",
@@ -693,9 +595,9 @@ equipmentThreshold.addEventListener("change", () => {
 });
 
 try {
-  feedUrl.value = localStorage.getItem("floorwatch-tracking-feed-url-v1") || "";
+  if (feedUrl) feedUrl.value = localStorage.getItem("floorwatch-tracking-feed-url-v1") || "";
 } catch {
-  feedUrl.value = "";
+  if (feedUrl) feedUrl.value = "";
 }
 
 document.querySelector("#enter-admin").addEventListener("click", () => {
