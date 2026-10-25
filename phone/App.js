@@ -1,90 +1,89 @@
-// Vibration test bench: feel each candidate pattern before building the real receiver.
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
+// Floorwatch phone: pick who you are, then pocket the phone and feel alerts from the dashboard.
+import { useState } from 'react';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useKeepAwake } from 'expo-keep-awake';
-import * as Haptics from 'expo-haptics';
+import BuzzTest from './BuzzTest';
+import Watch from './Watch';
+import { useRelay } from './useRelay';
+import { styles } from './styles';
 
-// Each step is [delayMs, action]. On iOS, Vibration.vibrate() is a fixed ~400 ms system buzz.
-const buzz = () => Vibration.vibrate();
-const heavy = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-const light = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-const error = () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+// Set when starting Expo: EXPO_PUBLIC_RELAY_URL=wss://<tunnel>.trycloudflare.com npx expo start --tunnel
+const DEFAULT_RELAY_URL = process.env.EXPO_PUBLIC_RELAY_URL || '';
 
-const PATTERNS = [
-  { key: 'warning', label: 'Warning', hint: 'one long buzz', color: '#f3b34f', repeatMs: 3000, steps: [[0, buzz]] },
-  { key: 'dangerTaps', label: 'Danger A', hint: 'triple heavy tap', color: '#e76d65', repeatMs: 1000, steps: [[0, heavy], [120, heavy], [240, heavy]] },
-  { key: 'dangerBuzz', label: 'Danger B', hint: 'triple long buzz', color: '#e76d65', repeatMs: 1500, steps: [[0, buzz], [450, buzz], [900, buzz]] },
-  { key: 'zone', label: 'Zone entry', hint: 'error taps + buzz', color: '#c062e0', repeatMs: 2000, steps: [[0, error], [350, buzz]] },
-  { key: 'clear', label: 'Clear', hint: 'one light tap', color: '#64d9a0', repeatMs: 3000, steps: [[0, light]] },
-];
-
-const POCKET_DELAY_MS = 5000;
-const POCKET_LENGTH_MS = 12000;
+const STATUS_TEXT = { connecting: 'Connecting to relay…', open: 'Connected to relay', closed: 'Relay unreachable, retrying…' };
 
 export default function App() {
   useKeepAwake();
-  const timers = useRef([]);
-  const [active, setActive] = useState(null);
-  const [status, setStatus] = useState('Tap a pattern to feel it once.');
+  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
+  const [draftUrl, setDraftUrl] = useState(DEFAULT_RELAY_URL);
+  const [screen, setScreen] = useState('pick');
+  const [asset, setAsset] = useState(null);
+  const relay = useRelay(relayUrl);
 
-  const stop = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-    Vibration.cancel();
-    setActive(null);
+  const choose = (item) => {
+    setAsset(item);
+    relay.watch(item.id);
+    setScreen('watch');
   };
-  useEffect(() => stop, []);
-
-  const later = (ms, fn) => timers.current.push(setTimeout(fn, ms));
-  const playOnce = (pattern, offset = 0) => pattern.steps.forEach(([delay, action]) => later(offset + delay, action));
-
-  const pocketTest = (pattern) => {
-    stop();
-    setActive(pattern.key);
-    setStatus(`Pocket it! ${pattern.label} starts in 5 s and repeats for 12 s.`);
-    for (let t = 0; t < POCKET_LENGTH_MS; t += pattern.repeatMs) playOnce(pattern, POCKET_DELAY_MS + t);
-    later(POCKET_DELAY_MS + POCKET_LENGTH_MS, () => { setActive(null); setStatus('Done. Tap a pattern to feel it once.'); });
+  const back = () => {
+    relay.watch(null);
+    setScreen('pick');
   };
+
+  if (screen === 'test') return <><StatusBar style="light" /><BuzzTest onBack={() => setScreen('pick')} /></>;
+  if (screen === 'watch' && asset) return <><StatusBar hidden /><Watch asset={asset} relay={relay} onBack={back} /></>;
+
+  const groups = [
+    { kind: 'worker', title: 'WORKERS' },
+    { kind: 'equipment', title: 'EQUIPMENT · DRIVER' },
+  ];
+  const connected = relay.status === 'open';
 
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
-      <Text style={styles.title}>Buzz test</Text>
-      <Text style={styles.status}>{status}</Text>
-      <ScrollView contentContainerStyle={styles.list}>
-        {PATTERNS.map((pattern) => (
-          <View key={pattern.key} style={[styles.row, active === pattern.key && { borderColor: pattern.color }]}>
-            <Pressable style={styles.main} onPress={() => { stop(); playOnce(pattern); }}>
-              <Text style={[styles.label, { color: pattern.color }]}>{pattern.label}</Text>
-              <Text style={styles.hint}>{pattern.hint} · repeats every {pattern.repeatMs / 1000}s</Text>
-            </Pressable>
-            <Pressable style={styles.pocket} onPress={() => pocketTest(pattern)}>
-              <Text style={styles.pocketText}>Pocket{'\n'}test</Text>
-            </Pressable>
-          </View>
-        ))}
-        <Pressable style={styles.stop} onPress={() => { stop(); setStatus('Stopped.'); }}>
-          <Text style={styles.stopText}>Stop</Text>
+      <Text style={styles.title}>Who are you?</Text>
+      <Text style={styles.status}>
+        {relayUrl ? STATUS_TEXT[relay.status] : 'Enter the relay address below.'}
+        {connected && !relay.dashboardOnline ? ' · dashboard not open' : ''}
+      </Text>
+      <ScrollView contentContainerStyle={styles.list} keyboardShouldPersistTaps="handled">
+        {connected && !relay.roster.length && <Text style={styles.note}>No people registered yet. Start the demo or add trackers on the admin dashboard.</Text>}
+        {groups.map(({ kind, title }) => {
+          const items = relay.roster.filter((item) => item.kind === kind);
+          if (!items.length) return null;
+          return (
+            <View key={kind} style={styles.list}>
+              <Text style={styles.groupLabel}>{title}</Text>
+              {items.map((item) => (
+                <Pressable key={item.id} style={styles.row} onPress={() => choose(item)}>
+                  <View style={styles.main}><Text style={styles.label}>{item.name}</Text></View>
+                </Pressable>
+              ))}
+            </View>
+          );
+        })}
+        <Text style={styles.groupLabel}>RELAY ADDRESS</Text>
+        <TextInput
+          style={styles.input}
+          value={draftUrl}
+          onChangeText={setDraftUrl}
+          onSubmitEditing={() => setRelayUrl(draftUrl.trim())}
+          placeholder="wss://….trycloudflare.com"
+          placeholderTextColor="#4b5a55"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          returnKeyType="go"
+        />
+        <Pressable style={styles.secondary} onPress={() => setRelayUrl(draftUrl.trim())}>
+          <Text style={styles.secondaryText}>Connect</Text>
         </Pressable>
-        <Text style={styles.note}>Turn off Low Power Mode: iOS mutes haptics while it is on. Try once with the ring switch on silent too.</Text>
+        <Pressable style={styles.secondary} onPress={() => setScreen('test')}>
+          <Text style={styles.secondaryText}>Buzz test</Text>
+        </Pressable>
       </ScrollView>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0d1514', paddingTop: 72, paddingHorizontal: 16 },
-  title: { color: '#e8efe9', fontSize: 28, fontWeight: '700' },
-  status: { color: '#9fb0a8', marginTop: 6, marginBottom: 16, minHeight: 40 },
-  list: { gap: 12, paddingBottom: 48 },
-  row: { flexDirection: 'row', borderWidth: 2, borderColor: '#24332f', borderRadius: 14, backgroundColor: '#15201e', overflow: 'hidden' },
-  main: { flex: 1, padding: 16 },
-  label: { fontSize: 20, fontWeight: '700' },
-  hint: { color: '#9fb0a8', marginTop: 4 },
-  pocket: { width: 84, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1d2b28' },
-  pocketText: { color: '#e8efe9', textAlign: 'center', fontWeight: '600' },
-  stop: { padding: 16, borderRadius: 14, backgroundColor: '#2a1a19', alignItems: 'center' },
-  stopText: { color: '#efaaa2', fontWeight: '700', fontSize: 16 },
-  note: { color: '#6f807a', fontSize: 13, lineHeight: 18 },
-});

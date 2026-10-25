@@ -1,0 +1,12 @@
+{
+  "name": "floorwatch-relay",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

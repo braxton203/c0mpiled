@@ -2,6 +2,7 @@ import { ASSET_STORAGE_KEY, createInitialState, FLOOR, ZONE_STORAGE_KEY } from '
 import { createSimulator, stepSimulator } from './simulation.js';
 import { SAFETY_CONFIG, evaluateSafety } from './safety.js';
 import { renderFactory } from './renderer.js';
+import { createPhoneLink } from './phone-link.js';
 
 const canvas = document.querySelector('#factory-map');
 const alerts = document.querySelector('#alerts');
@@ -12,10 +13,12 @@ let simulator = createSimulator(state);
 let positions = stepSimulator(simulator, state, 0);
 let running = true;
 let lastFrame = performance.now();
+const phoneLink = createPhoneLink();
 
 function draw() {
   const events = evaluateSafety(state, positions, SAFETY_CONFIG);
   renderFactory(canvas, state, positions, events);
+  phoneLink.update(state, events);
   document.querySelector('#worker-count').textContent = state.workers.length;
   document.querySelector('#vehicle-count').textContent = state.vehicles.length;
   document.querySelector('#event-count').textContent = events.length;
