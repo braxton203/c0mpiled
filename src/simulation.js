@@ -30,7 +30,7 @@ export function stepSimulator(simulator, state, dt) {
 
   for (const kind of ['workers', 'vehicles']) {
     for (const entity of Object.values(simulator.entities[kind])) {
-      bounce(entity, elapsed, MARGINS[kind]);
+      bounce(entity, elapsed, MARGINS[kind], simulator.elapsed);
     }
   }
 
@@ -76,16 +76,36 @@ function createMovingEntity(id, kind, index) {
   const margin = MARGINS[kind];
   const x = Math.max(margin, Math.min(FLOOR.width - margin, spawn[0]));
   const y = Math.max(margin, Math.min(FLOOR.height - margin, spawn[1]));
-  // Vehicles use a lane-following horizontal path. Workers move more slowly in
-  // varied directions. Both bounce at the floor edge and remain in bounds.
-  const angle = kind === 'vehicles'
-    ? (index % 2 === 0 ? 0 : Math.PI)
-    : seed * Math.PI * 2;
+  const angle = seed * Math.PI * 2;
   const speed = kind === 'vehicles' ? 2.1 + seed * 0.9 : 0.65 + seed * 0.55;
-  return { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, heading: angle };
+  return {
+    x,
+    y,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    heading: angle,
+    targetHeading: angle,
+    turnRate: kind === 'vehicles' ? 1.1 : 1.6,
+    nextTurnAt: 0.6 + seed * 1.2,
+    randomState: (Math.floor(seed * 0xffffffff) || 1) >>> 0,
+    speed,
+  };
 }
 
-function bounce(entity, dt, margin) {
+function bounce(entity, dt, margin, elapsed) {
+  if (elapsed >= entity.nextTurnAt) {
+    entity.targetHeading = entity.heading + (nextRandom(entity) - 0.5) * Math.PI * 1.5;
+    entity.nextTurnAt = elapsed + 0.6 + nextRandom(entity) * 1.8;
+  }
+  const headingDelta = Math.atan2(
+    Math.sin(entity.targetHeading - entity.heading),
+    Math.cos(entity.targetHeading - entity.heading),
+  );
+  const maxTurn = entity.turnRate * dt;
+  entity.heading += Math.max(-maxTurn, Math.min(maxTurn, headingDelta));
+  entity.vx = Math.cos(entity.heading) * entity.speed;
+  entity.vy = Math.sin(entity.heading) * entity.speed;
+
   let x = entity.x + entity.vx * dt;
   let y = entity.y + entity.vy * dt;
   if (x < margin || x > FLOOR.width - margin) entity.vx *= -1;
@@ -93,6 +113,11 @@ function bounce(entity, dt, margin) {
   entity.x = Math.max(margin, Math.min(FLOOR.width - margin, x));
   entity.y = Math.max(margin, Math.min(FLOOR.height - margin, y));
   entity.heading = Math.atan2(entity.vy, entity.vx);
+}
+
+function nextRandom(entity) {
+  entity.randomState = (Math.imul(entity.randomState, 1664525) + 1013904223) >>> 0;
+  return entity.randomState / 4294967296;
 }
 
 function hashId(value) {

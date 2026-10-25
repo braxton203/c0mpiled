@@ -1,4 +1,5 @@
 import { FLOOR } from './model.js';
+import { SAFETY_CONFIG } from './safety.js';
 
 const COLORS = {
   background: '#17231f', floor: '#1b2924', grid: '#2b3b34', aisle: '#25372f', aisleLine: '#3c5147',
@@ -118,6 +119,18 @@ function drawVehicles(ctx, records, snapshots, active, scale, px, py) {
     const position = byId.get(record.id);
     if (!validPosition(position)) continue;
     const x = px(position.x), y = py(position.y), heading = Number.isFinite(position.heading) ? position.heading : 0;
+    const thresholdRadius = SAFETY_CONFIG.equipmentWarningMeters * scale;
+    ctx.save();
+    ctx.globalAlpha = position.stale ? 0.18 : 0.42;
+    ctx.fillStyle = 'rgba(241, 169, 78, 0.12)';
+    ctx.strokeStyle = COLORS.vehicle;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.arc(x, y, thresholdRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
     ctx.save();
     ctx.globalAlpha = position.stale ? 0.35 : 1;
     ctx.save();
